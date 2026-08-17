@@ -570,9 +570,10 @@ Failed batches:       0
 
 ## Author
 
-**Alexander Emeka-Akam**
-B.Sc. Applied Artificial Intelligence
-IU International University of Applied Sciences
+**Alexander Soromtochukwu Emeka-Akam**  
+B.Sc. Applied Artificial Intelligence  
+IU International University of Applied Sciences  
+Berlin, Germany  
 
-GitHub: [GitHub Profile](YOUR_GITHUB_URL)
+GitHub: [GitHub Profile](YOUR_GITHUB_URL)  
 LinkedIn: [LinkedIn Profile](YOUR_LINKEDIN_URL)
