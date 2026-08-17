@@ -21,3 +21,6 @@ logs/*.log
 # IDE/editor files
 .vscode/
 .idea/
+
+# Full source dataset - download separately
+data/city_hour.csv
