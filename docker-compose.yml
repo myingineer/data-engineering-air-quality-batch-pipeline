@@ -1,0 +1,36 @@
+services:
+  mongodb:
+    image: mongo:8
+    container_name: air-quality-mongodb
+
+    ports:
+      - "27017:27017"
+
+    volumes:
+      - mongodb_data:/data/db
+
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+  pipeline:
+    build: .
+    container_name: air-quality-pipeline
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    environment:
+      MONGO_URI: mongodb://mongodb:27017
+      MONGO_DATABASE: air_quality_db
+
+    volumes:
+      - ./logs:/app/logs
+
+
+volumes:
+  mongodb_data:
