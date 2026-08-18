@@ -8,10 +8,11 @@ services:
 
     volumes:
       - mongodb_data:/data/db
+      - ./scripts/init_mongo.js:/docker-entrypoint-initdb.d/init_mongo.js:ro
 
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
-      interval: 5s
+      interval: 30s
       timeout: 3s
       retries: 5
 
@@ -27,6 +28,7 @@ services:
     environment:
       MONGO_URI: mongodb://mongodb:27017
       MONGO_DATABASE: air_quality_db
+      DATA_FILE: data/sample_city_hour.csv
 
     volumes:
       - ./logs:/app/logs

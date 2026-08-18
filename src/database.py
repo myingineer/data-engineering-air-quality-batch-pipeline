@@ -8,31 +8,78 @@ from src.config import (
     MONGO_URI,
 )
 
+
+# Create one MongoDB client when the application starts.
+# PyMongo will reuse its internal connection pool for all database operations.
+client = MongoClient(
+    MONGO_URI,
+    serverSelectionTimeoutMS=3000,
+)
+
+# Select the database configured for the application.
+db = client[MONGO_DATABASE]
+
+
 def get_database():
     """
-    Connect to MongoDB and return the project database.
+    Return the MongoDB database used by the application.
     """
 
-    client = MongoClient(
-        MONGO_URI,
-        serverSelectionTimeoutMS=3000
-    )
-
-    return client[MONGO_DATABASE]
+    return db
 
 
 def get_batch_runs_collection():
     """
-    Return the MongoDB collection used to track batch executions.
+    Return the collection used to track daily batch execution.
     """
 
-    db = get_database()
-
+    # Select the batch status collection.
     collection = db[BATCH_RUNS_COLLECTION]
 
-    # Each calendar day should have only one batch-tracking document.
+    # Each calendar-day batch should have only one tracking document.
     collection.create_index(
         "batch_id",
+        unique=True,
+    )
+
+    return collection
+
+
+def get_measurements_collection():
+    """
+    Return the collection containing cleaned hourly measurements.
+    """
+
+    # Select the hourly air-quality measurements collection.
+    collection = db[MEASUREMENTS_COLLECTION]
+
+    # A city can have only one measurement for a specific timestamp.
+    # This also prevents duplicates when a failed batch is retried.
+    collection.create_index(
+        [
+            ("City", 1),
+            ("Datetime", 1),
+        ],
+        unique=True,
+    )
+
+    return collection
+
+
+def get_daily_summary_collection():
+    """
+    Return the collection containing daily city summaries.
+    """
+
+    # Select the daily aggregated summary collection.
+    collection = db[DAILY_SUMMARY_COLLECTION]
+
+    # Each city should have only one summary for each calendar day.
+    collection.create_index(
+        [
+            ("City", 1),
+            ("Date", 1),
+        ],
         unique=True,
     )
 
@@ -74,44 +121,6 @@ def should_process_batch(batch_id: str) -> bool:
     return batch_run["status"] != "success"
 
 
-def get_measurements_collection():
-    """
-    Return the MongoDB collection containing hourly air-quality measurements.
-    """
-
-    db = get_database()
-
-    collection = db[MEASUREMENTS_COLLECTION]
-
-    # A city should have only one measurement for a specific timestamp.
-    collection.create_index(
-        [
-            ("City", 1),
-            ("Datetime", 1),
-        ],
-        unique=True,
-    )
-
-    return collection
 
 
-def get_daily_summary_collection():
-    """
-    Return the MongoDB collection containing daily city summaries.
-    """
-
-    db = get_database()
-
-    collection = db[DAILY_SUMMARY_COLLECTION]
-
-    # Each city should have only one summary for each calendar date.
-    collection.create_index(
-        [
-            ("City", 1),
-            ("Date", 1),
-        ],
-        unique=True,
-    )
-
-    return collection
 

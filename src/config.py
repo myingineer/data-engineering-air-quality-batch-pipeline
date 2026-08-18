@@ -46,3 +46,9 @@ MONGO_DATABASE = os.getenv(
     "MONGO_DATABASE",
     "air_quality_db",
 )
+
+# Load the data file path from the environment variable, with a default value.
+DATA_FILE = os.getenv(
+    "DATA_FILE",
+    "data/sample_city_hour.csv",
+)

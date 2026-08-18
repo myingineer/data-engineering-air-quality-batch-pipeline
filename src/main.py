@@ -4,6 +4,8 @@ from src.cleaner import clean_batch
 from src.aggregator import create_daily_city_summary
 import logging
 from src.logging_config import setup_logging
+from src.config import DATA_FILE
+
 
 from src.database import (
     should_process_batch,
@@ -216,6 +218,6 @@ def run_pipeline(
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("data/city_hour.csv")
+    df = pd.read_csv(DATA_FILE)
 
     run_pipeline(df)

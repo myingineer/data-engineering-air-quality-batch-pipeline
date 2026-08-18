@@ -2,7 +2,7 @@
 
 A data-engineering batch pipeline for processing hourly air-quality measurements from cities across India.
 
-The system processes the source dataset in **daily batches**, validates and cleans records, stores hourly measurements in MongoDB, creates daily city-level summaries, tracks batch execution status, supports safe recovery after failures, and provides system-health reporting and city AQI comparisons.
+The system processes source data in **daily batches**, validates and cleans records, stores hourly measurements in MongoDB, creates daily city-level summaries, tracks batch execution status, supports safe recovery after failures, and provides system-health reporting and city AQI comparisons.
 
 ## Project Purpose
 
@@ -13,19 +13,15 @@ It separates two different concepts:
 * **Air-quality health** — represented by AQI and pollutant measurements.
 * **System health** — indicates whether the data-processing system is operating correctly and whether the latest available data was processed successfully.
 
-Daily city summaries allow analysts or regional teams to compare cities using a consistent set of metrics without repeatedly querying the complete hourly dataset.
+Daily city summaries allow analysts or regional teams to compare cities using consistent metrics without repeatedly aggregating the complete hourly dataset.
 
 ## Dataset
 
-The project uses the **Air Quality Data in India** dataset from Kaggle.
-
-Source:
+The project uses the **Air Quality Data in India** dataset from Kaggle:
 
 [Air Quality Data in India — Kaggle](https://www.kaggle.com/datasets/rohanrao/air-quality-data-in-india/data?select=city_hour.csv)
 
-The full `city_hour.csv` file is **not included in this repository**.
-
-A representative development sample is included:
+The repository includes:
 
 ```text
 data/sample_city_hour.csv
@@ -37,16 +33,34 @@ The sample contains:
 * 26 cities
 * 50 reproducibly sampled records per city
 
-To run the complete pipeline:
+The Dockerized pipeline uses this sample dataset by default. Therefore, the repository can be cloned and executed without downloading the complete dataset.
 
-1. Download `city_hour.csv` from the Kaggle dataset.
+The full `city_hour.csv` file is not committed to the repository because of its size.
+
+### Using the Full Dataset
+
+To process the complete dataset:
+
+1. Download `city_hour.csv` from the Kaggle source above.
 2. Place it in:
 
 ```text
 data/city_hour.csv
 ```
 
-The full dataset used during development contains:
+3. Change the pipeline input from:
+
+```text
+DATA_FILE=data/sample_city_hour.csv
+```
+
+to:
+
+```text
+DATA_FILE=data/city_hour.csv
+```
+
+The complete dataset used during development contains:
 
 * 707,875 hourly records
 * 26 cities
@@ -56,7 +70,7 @@ The full dataset used during development contains:
 
 ## Batch Design
 
-One batch represents **one calendar day** of all available hourly measurements.
+One batch represents **one calendar day** containing all available hourly measurements for that date.
 
 Example:
 
@@ -74,7 +88,7 @@ Datetime >= batch start
 Datetime < next calendar day
 ```
 
-The number of cities and records varies between days depending on available source data.
+The number of cities and records varies between days depending on the available source data.
 
 A complete day with all 26 cities can contain up to:
 
@@ -85,48 +99,59 @@ A complete day with all 26 cities can contain up to:
 ## Architecture
 
 ```text
-city_hour.csv
-      |
-      v
-Daily Batch Creation
-      |
-      v
-Schema Validation & Cleaning
-      |
-      +---------------------+
-      |                     |
-      v                     v
-Valid Records          Rejected Records
-      |
-      v
-Hourly Measurement Loading
-      |
-      v
-Daily City Aggregation
-      |
-      v
-Daily City Summary
-      |
-      v
-MongoDB
-├── hourly_measurements
-├── daily_city_summary
-└── batch_runs
+Docker Compose
+│
+├── MongoDB Container
+│   │
+│   └── init_mongo.js
+│       ├── initializes collections
+│       └── creates required indexes
+│
+└── Python Pipeline Container
+    │
+    └── source dataset
+         │
+         v
+    Daily Batch Creation
+         │
+         v
+    Schema Validation & Cleaning
+         │
+         ├───────────────> Rejected Records
+         │
+         v
+    Cleaned Hourly Measurements
+         │
+         v
+    MongoDB hourly_measurements
+         │
+         v
+    Daily City Aggregation
+         │
+         v
+    MongoDB daily_city_summary
+
+Batch processing metadata
+         │
+         v
+    MongoDB batch_runs
 ```
 
 ## Main Features
 
 * Daily batch processing
+* MongoDB database initialization through Docker
 * Schema validation
 * Datetime and numeric validation
 * Invalid-record rejection
 * MongoDB persistence
 * Idempotent loading using upserts
-* Automatic retry of failed batches
+* Retry of failed batches on subsequent pipeline runs
 * Automatic skipping of successful batches
 * Persistent batch-status tracking
 * Processing start and finish timestamps
 * Daily city-level aggregation
+* Intermediate representation for analytical queries
 * Data-completeness indicators
 * User-visible system-health reporting
 * City AQI comparison
@@ -137,25 +162,54 @@ MongoDB
 
 ## MongoDB Collections
 
+The system uses three MongoDB collections with separate responsibilities.
+
 ### `hourly_measurements`
 
-Stores cleaned hourly air-quality measurements.
+Stores the cleaned hourly air-quality data.
 
-Each document represents one city at one specific timestamp.
+Each document represents:
 
-Unique key:
+> one city at one specific timestamp
+
+The collection contains fields such as:
+
+```text
+City
+Datetime
+PM2.5
+PM10
+NO
+NO2
+NOx
+NH3
+CO
+SO2
+O3
+Benzene
+Toluene
+Xylene
+AQI
+AQI_Bucket
+```
+
+The unique key is:
 
 ```text
 City + Datetime
 ```
 
-This prevents duplicate measurements when batches are retried.
+This prevents duplicate hourly measurements when a batch is retried.
 
 ### `daily_city_summary`
 
 Stores one aggregated document per city per calendar day.
 
-Unique key:
+Each document represents:
+
+> one city for one day
+
+The unique key is:
 
 ```text
 City + Date
@@ -172,7 +226,7 @@ maximum_aqi
 average_pm25
 ```
 
-`measurement_count` and `aqi_reading_count` also provide data-quality information.
+`measurement_count` and `aqi_reading_count` also provide information about data completeness.
 
 For example:
 
@@ -181,13 +235,17 @@ measurement_count = 24
 aqi_reading_count = 23
 ```
 
-means 24 hourly records were available, but only 23 contained an AQI value.
+means 24 hourly records were available for the city, but only 23 contained an AQI value.
 
-This collection acts as an **intermediate representation**, allowing city comparisons and visualizations without repeatedly aggregating the full hourly dataset.
+This collection acts as an **intermediate representation**. City comparisons and visualizations can query the daily summaries instead of repeatedly aggregating the complete hourly dataset.
 
 ### `batch_runs`
 
-Stores operational information about each daily batch.
+Stores processing metadata for each daily batch.
+
+Each document represents:
+
+> the processing state of one calendar-day batch
 
 Fields include:
 
@@ -220,9 +278,44 @@ success
 failed
 ```
 
+The three collections therefore have different purposes:
+
+```text
+hourly_measurements
+→ detailed cleaned air-quality data
+
+daily_city_summary
+→ aggregated analytical data
+
+batch_runs
+→ processing state and system-health metadata
+```
+
+## Database Initialization
+
+MongoDB runs inside an official Docker container.
+
+The database setup script is:
+
+```text
+scripts/init_mongo.js
+```
+
+Docker Compose mounts this script into:
+
+```text
+/docker-entrypoint-initdb.d/
+```
+
+When MongoDB initializes a new database volume, the script creates the collections and required unique indexes.
+
+The Python database layer also ensures that the required indexes exist before data is loaded.
+
+MongoDB initialization scripts run automatically when the database starts with a new, empty data volume.
+
 ## Failure Recovery
 
-Before processing a batch, the pipeline checks its existing state in `batch_runs`.
+Before processing a daily batch, the pipeline checks its existing state in `batch_runs`.
 
 ```text
 Batch not found  → process
@@ -248,9 +341,9 @@ as a unique key.
 
 Both are loaded using MongoDB upserts.
 
-This means a failed or partially completed batch can be rerun without creating duplicate records.
+This makes processing idempotent: rerunning a failed or partially processed batch does not create duplicate measurements or summaries.
 
-For example:
+Example recovery flow:
 
 ```text
 Batch starts
@@ -276,7 +369,7 @@ Previously successful batches are skipped.
 
 ## System Health
 
-Pipeline health is made visible through:
+Pipeline health is made user-visible through:
 
 ```text
 scripts/verify_data.py
@@ -288,7 +381,7 @@ Run:
 python3 -m scripts.verify_data
 ```
 
-Possible system states are:
+The system reports one of three states.
 
 ### HEALTHY
 
@@ -301,7 +394,7 @@ Latest processed batch succeeded
 
 ```text
 MongoDB is reachable
-Latest batch failed or current data processing is incomplete
+Latest batch failed or no completed data is available
 ```
 
 Previously successful data remains available.
@@ -312,7 +405,7 @@ Previously successful data remains available.
 MongoDB is unreachable
 ```
 
-The health report also shows:
+The health report also displays:
 
 * successful batch count
 * failed batch count
@@ -322,7 +415,7 @@ The health report also shows:
 * latest successful data batch
 * batch error information
 
-After processing the complete dataset during development:
+A full-dataset development run produced:
 
 ```text
 System status: HEALTHY
@@ -334,7 +427,7 @@ Latest successful batch: 2020-07-01
 
 ## City Comparison
 
-Daily summaries support comparisons between cities without scanning the entire hourly collection.
+Daily summaries support comparisons between cities without scanning and aggregating the entire hourly collection for every query.
 
 Run:
 
@@ -349,7 +442,7 @@ The script:
 * displays AQI-reading coverage
 * generates a horizontal bar chart
 
-For example, `2020-05-10` contains AQI data for all 26 cities and provides a useful multi-city comparison.
+Using the complete dataset, `2020-05-10` contains AQI data for all 26 cities and provides a useful multi-city comparison.
 
 This supports collaborative analysis between environmental or public-health teams working across different cities or regions.
 
@@ -372,7 +465,7 @@ The two monitoring mechanisms have different purposes:
 
 ```text
 batch_runs
-→ structured current batch state in MongoDB
+→ structured batch state stored in MongoDB
 
 pipeline.log
 → chronological execution history
@@ -383,7 +476,7 @@ Generated `.log` files are excluded from Git.
 ## Project Structure
 
 ```text
-air_quality_batch_pipeline/
+data-engineering-air-quality-batch-pipeline/
 │
 ├── data/
 │   ├── sample_city_hour.csv
@@ -401,6 +494,7 @@ air_quality_batch_pipeline/
 │
 ├── scripts/
 │   ├── __init__.py
+│   ├── init_mongo.js
 │   ├── verify_data.py
 │   └── compare_cities.py
 │
@@ -423,26 +517,103 @@ air_quality_batch_pipeline/
 
 ## Environment Configuration
 
-Create a local `.env` file:
-
-```bash
-cp .env.example .env
-```
-
-Example:
+The application supports the following environment variables:
 
 ```env
 MONGO_URI=mongodb://localhost:27017
 MONGO_DATABASE=air_quality_db
+DATA_FILE=data/sample_city_hour.csv
 ```
 
-When the Python application runs inside Docker Compose, it connects to MongoDB through the Compose service name:
+`DATA_FILE` determines which dataset the pipeline processes.
+
+By default:
+
+```text
+DATA_FILE=data/sample_city_hour.csv
+```
+
+When the Python application runs inside Docker Compose, MongoDB is reached using the Compose service name:
 
 ```text
 mongodb://mongodb:27017
 ```
 
+instead of:
+
+```text
+mongodb://localhost:27017
+```
+
+because the Python application and MongoDB run in separate containers.
+
+## Run with Docker
+
+Docker is the recommended way to run the project.
+
+Clone the repository:
+
+```bash
+git clone https://github.com/myingineer/data-engineering-air-quality-batch-pipeline.git
+cd data-engineering-air-quality-batch-pipeline
+```
+
+Build and start the complete system:
+
+```bash
+docker compose up --build
+```
+
+Docker Compose automatically:
+
+1. Starts the MongoDB container.
+2. Runs `scripts/init_mongo.js` when a new MongoDB data volume is initialized.
+3. Creates the required collections and indexes.
+4. Waits until MongoDB is healthy.
+5. Starts the Python pipeline container.
+6. Loads `data/sample_city_hour.csv`.
+7. Processes the sample data in daily batches.
+8. Stores hourly measurements in `hourly_measurements`.
+9. Creates daily city summaries in `daily_city_summary`.
+10. Stores batch execution metadata in `batch_runs`.
+
+No download of the complete dataset is required to run the sample system.
+
+### Run with the Full Dataset
+
+Download `city_hour.csv` from:
+
+[Air Quality Data in India — Kaggle](https://www.kaggle.com/datasets/rohanrao/air-quality-data-in-india/data?select=city_hour.csv)
+
+Place the file in:
+
+```text
+data/city_hour.csv
+```
+
+Then change the pipeline environment setting in `docker-compose.yml` from:
+
+```yaml
+DATA_FILE: data/sample_city_hour.csv
+```
+
+to:
+
+```yaml
+DATA_FILE: data/city_hour.csv
+```
+
+Rebuild and start the system:
+
+```bash
+docker compose up --build
+```
+
+The pipeline will then process the complete dataset.
+
 ## Local Setup
+
+Docker is still required for MongoDB, but the Python pipeline can also be executed directly on the host machine.
 
 Create a virtual environment:
 
@@ -462,10 +633,10 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Download `city_hour.csv` from Kaggle and place it in:
+Create a local `.env` file:
 
-```text
-data/city_hour.csv
+```bash
+cp .env.example .env
 ```
 
 Start MongoDB:
@@ -480,43 +651,29 @@ Run the pipeline:
 python3 -m src.main
 ```
 
-## Docker Setup
-
-Build the pipeline image:
-
-```bash
-docker compose build pipeline
-```
-
-Run the pipeline:
-
-```bash
-docker compose run --rm pipeline
-```
-
-Docker Compose runs:
+With the default configuration, the pipeline processes:
 
 ```text
-pipeline container
-      ↓
-mongodb:27017
-      ↓
-MongoDB container
+data/sample_city_hour.csv
 ```
 
-MongoDB data is stored in a persistent Docker volume.
+To run the complete dataset locally, download `city_hour.csv`, place it in `data/`, and set:
 
-Application logs are mounted to:
-
-```text
-logs/
+```env
+DATA_FILE=data/city_hour.csv
 ```
-
-on the host system.
 
 ## Tests
 
-Run all automated tests:
+The automated tests require MongoDB to be running because the loader tests interact with the database.
+
+Start MongoDB if necessary:
+
+```bash
+docker compose up -d mongodb
+```
+
+Run all tests:
 
 ```bash
 pytest -v
@@ -542,6 +699,9 @@ Current test result:
 
 The project is considered successful when:
 
+* the repository can be cloned and the sample system started using Docker;
+* MongoDB is initialized automatically inside its container;
+* the included sample data can be loaded automatically by the Python pipeline;
 * source data is divided into clearly bounded daily batches;
 * each batch knows its start and end boundaries;
 * valid hourly measurements are stored without duplication;
@@ -552,7 +712,7 @@ The project is considered successful when:
 * system availability can be reported as HEALTHY, DEGRADED, or FAILED;
 * daily city summaries provide an intermediate representation for analysis;
 * different cities can be compared using consistent daily metrics;
-* AQI coverage is visible alongside city summaries;
+* AQI-reading coverage is visible alongside city summaries;
 * city comparisons can be visualized;
 * the pipeline can resume after interruption;
 * the complete source dataset can be processed without record loss.
@@ -560,20 +720,19 @@ The project is considered successful when:
 The complete development run confirmed:
 
 ```text
-Source records:       707875
-Stored measurements:  707875
+Source records:        707875
+Stored measurements:   707875
 
-Calendar-day batches: 2009
-Successful batches:   2009
-Failed batches:       0
+Calendar-day batches:  2009
+Successful batches:    2009
+Failed batches:        0
 ```
 
 ## Author
 
-**Alexander Soromtochukwu Emeka-Akam**  
-B.Sc. Applied Artificial Intelligence  
-IU International University of Applied Sciences  
-Berlin, Germany  
+**Alexander Soromtochukwu Emeka-Akam**
+B.Sc. Applied Artificial Intelligence
+IU International University of Applied Sciences
+Berlin, Germany
 
-GitHub: [GitHub Profile](YOUR_GITHUB_URL)  
-LinkedIn: [LinkedIn Profile](YOUR_LINKEDIN_URL)
+GitHub: [myingineer](https://github.com/myingineer)
