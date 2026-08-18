@@ -730,9 +730,9 @@ Failed batches:        0
 
 ## Author
 
-**Alexander Soromtochukwu Emeka-Akam**
-B.Sc. Applied Artificial Intelligence
-IU International University of Applied Sciences
+**Alexander Soromtochukwu Emeka-Akam**  
+B.Sc. Applied Artificial Intelligence  
+IU International University of Applied Sciences  
 Berlin, Germany
 
 GitHub: [myingineer](https://github.com/myingineer)
