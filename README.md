@@ -1,4 +1,10 @@
 # Air Quality Batch Processing Pipeline
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
+![Pandas](https://img.shields.io/badge/Pandas-150458?style=flat-square&logo=pandas&logoColor=white)
+![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat-square&logo=mongodb&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat-square&logo=docker&logoColor=white)
+![ETL](https://img.shields.io/badge/ETL-555555?style=flat-square)
+![Batch Processing](https://img.shields.io/badge/Batch_Processing-005571?style=flat-square)
 
 A data-engineering batch pipeline for processing hourly air-quality measurements from cities across India.
 
