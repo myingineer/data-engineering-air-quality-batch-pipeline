@@ -734,6 +734,285 @@ Successful batches:    2009
 Failed batches:        0
 ```
 
+## User Scenarios and System Operation
+
+### 1. Municipal Environmental Scientist
+
+A municipal environmental scientist uses the processed data to compare air-quality conditions between cities for a selected day.
+
+The scientist can use the daily summary data stored in the `daily_city_summary` collection. For example, the following MongoDB query returns the daily AQI values for all cities on a selected date:
+
+```javascript
+db.daily_city_summary.find(
+    {
+        Date: ISODate("2020-05-10T00:00:00Z")
+    },
+    {
+        _id: 0,
+        City: 1,
+        average_aqi: 1,
+        aqi_reading_count: 1,
+        measurement_count: 1
+    }
+).sort(
+    {
+        average_aqi: -1
+    }
+)
+```
+
+This result can be used by a future dashboard or visualization to compare cities by average AQI.
+
+A comparison can also be generated with:
+
+```bash
+python3 -m scripts.compare_cities
+```
+
+The expected output is a city-level ranking based on the daily AQI summary.
+
+---
+
+### 2. Disagreement Between Scientists
+
+If scientists from different municipalities disagree about a conclusion based on the aggregated daily values, they can inspect the detailed measurements used to create the summary.
+
+For example, the hourly measurements for Delhi on a selected day can be queried with:
+
+```javascript
+db.hourly_measurements.find(
+    {
+        City: "Delhi",
+        Datetime: {
+            $gte: ISODate("2020-05-10T00:00:00Z"),
+            $lt: ISODate("2020-05-11T00:00:00Z")
+        }
+    }
+).sort(
+    {
+        Datetime: 1
+    }
+)
+```
+
+This provides the cleaned hourly measurements used to calculate the daily summary.
+
+The fields `measurement_count` and `aqi_reading_count` in `daily_city_summary` also help users evaluate the completeness of the data used for a conclusion.
+
+For example:
+
+```text
+measurement_count = 24
+aqi_reading_count = 23
+```
+
+This means that 24 hourly records were available for the city on that day, but only 23 contained a valid AQI value.
+
+The detailed records therefore provide a common source of evidence if scientists reach different conclusions from the aggregated results.
+
+---
+
+### 3. System Administrator / Data Engineer
+
+The system administrator is responsible for starting, monitoring, and recovering the batch-processing system.
+
+The complete Dockerized system can be started with:
+
+```bash
+docker compose up --build
+```
+
+Docker Compose starts MongoDB, initializes the required database structure, waits until MongoDB is healthy, and then starts the Python batch-processing pipeline.
+
+The administrator can inspect the running containers with:
+
+```bash
+docker compose ps
+```
+
+Pipeline health can be checked with:
+
+```bash
+python3 -m scripts.verify_data
+```
+
+A healthy system reports information such as:
+
+```text
+=== Air Quality Pipeline Health ===
+
+System status: HEALTHY
+
+Database:
+MongoDB: reachable
+
+Batch coverage:
+Expected batches: 820
+Successful batches: 820
+Failed batches: 0
+Outstanding batches: 0
+Latest source batch: 2020-06-29
+
+Stored measurements:
+1300
+```
+
+The health script determines the number of expected daily batches from the currently configured source dataset and compares this with the successfully processed batches recorded in MongoDB.
+
+This makes it possible to detect situations where the database is available and individual batches have succeeded, but the pipeline has not processed all expected data.
+
+For example:
+
+```text
+=== Air Quality Pipeline Health ===
+
+System status: DEGRADED
+
+Batch coverage:
+Expected batches: 820
+Successful batches: 819
+Failed batches: 0
+Outstanding batches: 1
+```
+
+In this case, MongoDB is still reachable, but one expected batch has not completed successfully.
+
+The report also identifies the latest processed batch and the latest successfully completed batch. This helps the administrator determine where processing stopped.
+
+The pipeline can then be restarted with:
+
+```bash
+python3 -m src.main
+```
+
+Successful batches are skipped, while incomplete or failed batches are processed again.
+
+Because MongoDB writes use unique indexes and upserts, retrying an unfinished batch does not create duplicate hourly measurements or duplicate daily summaries.
+
+The system-health states have the following meanings:
+
+```text
+HEALTHY
+MongoDB is reachable and all expected batches have completed successfully.
+
+DEGRADED
+MongoDB is reachable, but one or more expected batches are incomplete or failed.
+
+FAILED
+MongoDB cannot be reached and the data-processing system is unavailable.
+```
+
+---
+
+### 4. Batch Failure and Recovery Scenario
+
+Each batch represents one calendar day.
+
+For example:
+
+```text
+Batch ID: 2020-05-10
+Start:    2020-05-10 00:00:00
+End:      2020-05-11 00:00:00
+```
+
+All available hourly measurements from all cities for that calendar day belong to this batch.
+
+Before processing begins, the batch is stored in `batch_runs` with:
+
+```text
+status = running
+```
+
+If cleaning, loading, or aggregation fails, the batch is stored with:
+
+```text
+status = failed
+```
+
+and the error message is retained.
+
+When the pipeline is started again, batches that already have:
+
+```text
+status = success
+```
+
+are skipped.
+
+Failed or incomplete batches are retried.
+
+This means that a system administrator can correct an external problem, such as unavailable storage or a temporarily unavailable database, and restart the pipeline without processing all successful batches again.
+
+---
+
+### 5. Integration into a Larger End-User System
+
+The batch-processing pipeline is designed to operate as the data-processing layer of a larger environmental monitoring and public-health system.
+
+A possible system architecture is:
+
+```text
+Air-quality sensor / source data
+             |
+             v
+     Daily batch pipeline
+             |
+     +-------+-------+
+     |               |
+     v               v
+hourly_measurements  daily_city_summary
+     |               |
+     |               v
+     |        Dashboard / Visualization
+     |               |
+     v               v
+Detailed analysis   City comparisons
+             |
+             v
+   Public-health decisions
+
+             +
+
+        batch_runs
+             |
+             v
+ System administration
+ and health monitoring
+```
+
+The `hourly_measurements` collection contains the detailed cleaned records and can be used when scientists need to investigate individual measurements.
+
+The `daily_city_summary` collection provides a smaller intermediate representation for analytical queries. A dashboard does not need to repeatedly aggregate the complete hourly dataset when displaying daily city comparisons.
+
+The `batch_runs` collection stores the operational state of the processing system and allows administrators to determine whether the available analytical data is current and complete.
+
+A future front-end application could therefore use the processed data to provide:
+
+- daily AQI comparisons between municipalities,
+- environmental monitoring dashboards,
+- historical city-level analysis,
+- public-health warning information,
+- and drill-down access to the underlying hourly measurements.
+
+The visualization itself is separate from the batch-processing system. A future visualization component can query `daily_city_summary` to retrieve city-level AQI values and display them as tables, rankings, maps, or charts.
+
+---
+
+### 6. Scalability and Reliability
+
+The prototype runs locally with MongoDB and Docker, but its structure supports future deployment in a larger environment.
+
+Daily batching prevents the entire dataset from having to be processed as one operation. Each day can be tracked independently through `batch_runs`, making failed batches easier to identify and retry.
+
+The `daily_city_summary` collection reduces the amount of processing required for common analytical queries because frequently needed daily results are calculated during ingestion rather than every time a user requests a comparison.
+
+Unique indexes on `City + Datetime` for hourly measurements and `City + Date` for daily summaries prevent duplicate records.
+
+MongoDB was selected partly because its document-oriented structure can also accommodate additional environmental measurements if new sensor types are introduced later.
+
+For larger production deployments, MongoDB can be moved from the local Docker environment to a distributed or cloud-based deployment without changing the basic data model or application responsibilities.
+
 ## Author
 
 **Alexander Soromtochukwu Emeka-Akam**  

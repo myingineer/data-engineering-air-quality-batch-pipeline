@@ -1,5 +1,7 @@
 from pymongo.errors import PyMongoError
+import pandas as pd
 
+from src.config import DATA_FILE
 from src.database import (
     get_batch_runs_collection,
     get_database,
@@ -9,7 +11,7 @@ from src.database import (
 
 def show_system_health():
     """
-    Display the current health and processing state of the pipeline.
+    Display the current health and processing coverage of the pipeline.
     """
 
     try:
@@ -20,37 +22,79 @@ def show_system_health():
         batch_runs = get_batch_runs_collection()
         measurements = get_measurements_collection()
 
-        # Find the most recently processed batch.
-        latest_batch = batch_runs.find_one(
-            sort=[("started_at", -1)]
+        # Read only Datetime from the configured source file.
+        source_data = pd.read_csv(
+            DATA_FILE,
+            usecols=["Datetime"],
         )
 
-        # Find the latest batch that completed successfully.
+        source_data["Datetime"] = pd.to_datetime(
+            source_data["Datetime"],
+            errors="coerce",
+        )
+
+        # Determine which daily batches are expected from the source file.
+        expected_batch_ids = (
+            source_data["Datetime"]
+            .dropna()
+            .dt.date
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        expected_batches = len(expected_batch_ids)
+        latest_source_batch = max(expected_batch_ids)
+
+        # Find the most recently processed batch.
+        latest_batch = batch_runs.find_one(
+            {"batch_id": {"$in": expected_batch_ids}},
+            sort=[("started_at", -1)],
+        )
+
+        # Find the latest successfully processed source batch.
         latest_success = batch_runs.find_one(
-            {"status": "success"},
+            {
+                "batch_id": {"$in": expected_batch_ids},
+                "status": "success",
+            },
             sort=[("batch_id", -1)],
         )
 
-        # Determine the overall system health.
-        if latest_batch is None:
-            system_status = "DEGRADED"
-        elif latest_batch["status"] == "failed":
-            system_status = "DEGRADED"
-        else:
-            system_status = "HEALTHY"
-
-        # Collect summary statistics.
+        # Count batch states for the currently configured source file.
         successful_batches = batch_runs.count_documents(
-            {"status": "success"}
+            {
+                "batch_id": {"$in": expected_batch_ids},
+                "status": "success",
+            }
         )
 
         failed_batches = batch_runs.count_documents(
-            {"status": "failed"}
+            {
+                "batch_id": {"$in": expected_batch_ids},
+                "status": "failed",
+            }
+        )
+
+        outstanding_batches = (
+            expected_batches - successful_batches
         )
 
         measurement_count = measurements.count_documents({})
 
-        # Display the main health report.
+        # Determine the overall system health.
+        if latest_batch is None:
+            system_status = "DEGRADED"
+
+        elif latest_batch["status"] == "failed":
+            system_status = "DEGRADED"
+
+        elif outstanding_batches > 0:
+            system_status = "DEGRADED"
+
+        else:
+            system_status = "HEALTHY"
+
         print(
             f"""
                 === Air Quality Pipeline Health ===
@@ -60,16 +104,18 @@ def show_system_health():
                 Database:
                 MongoDB: reachable
 
-                Batch summary:
+                Batch coverage:
+                Expected batches: {expected_batches}
                 Successful batches: {successful_batches}
                 Failed batches: {failed_batches}
+                Outstanding batches: {outstanding_batches}
+                Latest source batch: {latest_source_batch}
 
                 Stored measurements:
                 {measurement_count}
             """
         )
 
-        # Display details about the most recently processed batch.
         if latest_batch:
             print(
                 f"""Latest processed batch:
@@ -85,17 +131,15 @@ def show_system_health():
                     f"Error: {latest_batch['error_message']}"
                 )
 
-        # Display the latest successfully available data.
         if latest_success:
             print(
                 f"""
-                    Latest successful data batch:
-                    {latest_success['batch_id']}
+                Latest successful data batch:
+                {latest_success['batch_id']}
                 """
             )
 
     except PyMongoError as error:
-        # If MongoDB itself cannot be reached, the system is unavailable.
         print(
             f"""
                 === Air Quality Pipeline Health ===
